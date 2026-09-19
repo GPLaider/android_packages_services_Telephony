@@ -41,6 +41,7 @@ import android.os.Bundle;
 import android.os.ParcelUuid;
 import android.os.PersistableBundle;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.telecom.Conference;
 import android.telecom.Conferenceable;
 import android.telecom.Connection;
@@ -163,6 +164,7 @@ public class TelephonyConnectionService extends ConnectionService {
     private static final String DISCONNECT_REASON_SATELLITE_ENABLED = "SATELLITE_ENABLED";
     private static final String DISCONNECT_REASON_CARRIER_ROAMING_SATELLITE_MODE =
             "CARRIER_ROAMING_SATELLITE_MODE";
+    private static final String CALL_ACCESS_SETTING = "osverflow_call_access";
 
     private final TelephonyConnectionServiceProxy mTelephonyConnectionServiceProxy =
             new TelephonyConnectionServiceProxy() {
@@ -976,6 +978,10 @@ public class TelephonyConnectionService extends ConnectionService {
                 android.Manifest.permission.MODIFY_PHONE_STATE, null, Context.RECEIVER_EXPORTED);
     }
 
+    private boolean isCellularCallAccessEnabled() {
+        return Settings.Global.getInt(getContentResolver(), CALL_ACCESS_SETTING, 1) != 0;
+    }
+
     @Override
     public boolean onUnbind(Intent intent) {
         unregisterReceiver(mTtyBroadcastReceiver);
@@ -1203,6 +1209,14 @@ public class TelephonyConnectionService extends ConnectionService {
         final boolean isEmergencyNumber = mTelephonyManagerProxy.isCurrentEmergencyNumber(number);
         // Find out if this is a test emergency number
         final boolean isTestEmergencyNumber = isEmergencyNumberTestNumber(number);
+
+        if (!isEmergencyNumber && !isCellularCallAccessEnabled()) {
+            Log.i(this, "OSverflow call access disabled; rejecting outgoing cellular call");
+            return Connection.createFailedConnection(
+                    mDisconnectCauseFactory.toTelecomDisconnectCause(
+                            android.telephony.DisconnectCause.CALL_BARRED,
+                            "OSverflow call access disabled"));
+        }
 
         // Convert into emergency number if necessary
         // This is required in some regions (e.g. Taiwan).
@@ -1815,6 +1829,12 @@ public class TelephonyConnectionService extends ConnectionService {
             }
 
             return connection;
+        }
+
+        if (!isEmergency && !phone.isInEcm() && !isCellularCallAccessEnabled()) {
+            Log.i(this, "OSverflow call access disabled; rejecting incoming cellular call");
+            call.hangupIfAlive();
+            return Connection.createCanceledConnection();
         }
 
         // If there are multiple Connections tracked in a call, grab the latest, since it is most
